@@ -15,12 +15,11 @@ class WP_CLI_Abilities_Schema_Builder {
 	 */
 	public static function build(array $synopsis): array {
 
-		$properties = [];
-		$required   = [];
+		$properties  = [];
+		$required    = [];
 		$has_generic = false;
 
 		foreach ($synopsis as $param) {
-
 			$type = $param['type'] ?? '';
 			$name = $param['name'] ?? '';
 
@@ -35,11 +34,11 @@ class WP_CLI_Abilities_Schema_Builder {
 						'description' => $param['description'] ?? "Positional argument: {$name}",
 					];
 
-					if (!empty($param['options'])) {
+					if (! empty($param['options'])) {
 						$prop['enum'] = $param['options'];
 					}
 
-					$properties[$name] = $prop;
+					$properties[ $name ] = $prop;
 
 					if (empty($param['optional'])) {
 						$required[] = $name;
@@ -53,24 +52,24 @@ class WP_CLI_Abilities_Schema_Builder {
 						'description' => $param['description'] ?? "Option: --{$name}",
 					];
 
-					if (!empty($param['default'])) {
+					if (! empty($param['default'])) {
 						$prop['default'] = $param['default'];
 					}
 
-					if (!empty($param['options'])) {
+					if (! empty($param['options'])) {
 						$prop['enum'] = $param['options'];
 					}
 
-					$properties[$name] = $prop;
+					$properties[ $name ] = $prop;
 
-					if (!empty($param['required']) || (isset($param['optional']) && !$param['optional'])) {
+					if (! empty($param['required']) || (isset($param['optional']) && ! $param['optional'])) {
 						$required[] = $name;
 					}
 
 					break;
 
 				case 'flag':
-					$properties[$name] = [
+					$properties[ $name ] = [
 						'type'        => 'boolean',
 						'description' => $param['description'] ?? "Flag: --{$name}",
 						'default'     => false,
@@ -84,7 +83,7 @@ class WP_CLI_Abilities_Schema_Builder {
 			}
 		}
 
-		if (empty($properties) && !$has_generic) {
+		if (empty($properties) && ! $has_generic) {
 			return [];
 		}
 
@@ -93,7 +92,7 @@ class WP_CLI_Abilities_Schema_Builder {
 			'properties' => $properties,
 		];
 
-		if (!empty($required)) {
+		if (! empty($required)) {
 			$schema['required'] = $required;
 		}
 

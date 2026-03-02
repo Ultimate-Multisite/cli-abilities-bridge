@@ -97,7 +97,7 @@ class WP_CLI_Abilities_System_Executor {
 	public static function execute(string $binary, array $args = [], ?string $stdin = null, int $timeout = self::DEFAULT_TIMEOUT) {
 
 		// Validate binary against allowlist.
-		if (!in_array($binary, self::ALLOWED_BINARIES, true)) {
+		if (! in_array($binary, self::ALLOWED_BINARIES, true)) {
 			return new \WP_Error(
 				'system_binary_not_allowed',
 				sprintf('Binary "%s" is not in the allowed list.', $binary),
@@ -235,15 +235,15 @@ class WP_CLI_Abilities_System_Executor {
 		];
 
 		$env = [
-			'PATH'  => '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
-			'HOME'  => '/tmp',
-			'LANG'  => 'C.UTF-8',
-			'TERM'  => 'dumb',
+			'PATH' => '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+			'HOME' => '/tmp',
+			'LANG' => 'C.UTF-8',
+			'TERM' => 'dumb',
 		];
 
 		$process = proc_open($command, $descriptors, $pipes, '/tmp', $env);
 
-		if (!is_resource($process)) {
+		if (! is_resource($process)) {
 			return new \WP_Error('proc_open_failed', 'Failed to execute system command.');
 		}
 
@@ -258,15 +258,15 @@ class WP_CLI_Abilities_System_Executor {
 		stream_set_blocking($pipes[1], false);
 		stream_set_blocking($pipes[2], false);
 
-		$stdout  = '';
-		$stderr  = '';
-		$start   = microtime(true);
+		$stdout    = '';
+		$stderr    = '';
+		$start     = microtime(true);
 		$timed_out = false;
 
 		while (true) {
 			$status = proc_get_status($process);
 
-			if (!$status['running']) {
+			if (! $status['running']) {
 				// Process finished — drain remaining output.
 				$stdout .= stream_get_contents($pipes[1]);
 				$stderr .= stream_get_contents($pipes[2]);
@@ -281,8 +281,8 @@ class WP_CLI_Abilities_System_Executor {
 			}
 
 			// Read available data.
-			$read = [$pipes[1], $pipes[2]];
-			$write = null;
+			$read   = [$pipes[1], $pipes[2]];
+			$write  = null;
 			$except = null;
 
 			if (@stream_select($read, $write, $except, 0, 200000) > 0) {
@@ -303,7 +303,7 @@ class WP_CLI_Abilities_System_Executor {
 		$exit_code = $status['exitcode'] ?? proc_close($process);
 
 		// If status already had a valid exit code, still close.
-		if (isset($status) && !$status['running']) {
+		if (isset($status) && ! $status['running']) {
 			proc_close($process);
 		}
 
@@ -321,7 +321,7 @@ class WP_CLI_Abilities_System_Executor {
 		if ($exit_code !== 0) {
 			return new \WP_Error(
 				'system_command_error',
-				!empty($stderr) ? trim($stderr) : "Command exited with code {$exit_code}",
+				! empty($stderr) ? trim($stderr) : "Command exited with code {$exit_code}",
 				[
 					'exit_code' => $exit_code,
 					'stderr'    => $stderr,

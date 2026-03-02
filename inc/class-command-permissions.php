@@ -161,7 +161,7 @@ class WP_CLI_Abilities_Command_Permissions {
 
 		$level          = self::classify($command_path);
 		$capability_map = self::get_capability_map();
-		$required_cap   = $capability_map[$level] ?? 'manage_network';
+		$required_cap   = $capability_map[ $level ] ?? 'manage_network';
 
 		if (current_user_can($required_cap)) {
 			return true;
@@ -196,7 +196,7 @@ class WP_CLI_Abilities_Command_Permissions {
 		}
 
 		$capability_map = self::get_capability_map();
-		$required_cap   = $capability_map[$level] ?? 'manage_network';
+		$required_cap   = $capability_map[ $level ] ?? 'manage_network';
 
 		if (current_user_can($required_cap)) {
 			return true;

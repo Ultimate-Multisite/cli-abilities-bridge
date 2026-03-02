@@ -78,65 +78,77 @@ class WP_CLI_Abilities {
 	 */
 	private function register_cli_commands(): void {
 
-		WP_CLI::add_command('abilities sync', function($args, $assoc_args) {
+		WP_CLI::add_command(
+			'abilities sync',
+			function ($args, $assoc_args) {
 
-			$root    = WP_CLI::get_root_command();
-			$commands = [];
+				$root     = WP_CLI::get_root_command();
+				$commands = [];
 
-			$this->walk_commands($root, [], $commands);
+				$this->walk_commands($root, [], $commands);
 
-			WP_CLI_Abilities_Command_Cache::save_commands($commands);
+				WP_CLI_Abilities_Command_Cache::save_commands($commands);
 
-			WP_CLI::success(sprintf('Cached %d WP-CLI commands as abilities.', count($commands)));
-		}, [
-			'shortdesc' => 'Sync WP-CLI commands to the Abilities API cache.',
-			'longdesc'  => 'Discovers all registered WP-CLI leaf commands and caches their metadata for the Abilities API.',
-		]);
+				WP_CLI::success(sprintf('Cached %d WP-CLI commands as abilities.', count($commands)));
+			},
+			[
+				'shortdesc' => 'Sync WP-CLI commands to the Abilities API cache.',
+				'longdesc'  => 'Discovers all registered WP-CLI leaf commands and caches their metadata for the Abilities API.',
+			]
+		);
 
-		WP_CLI::add_command('abilities clear', function() {
+		WP_CLI::add_command(
+			'abilities clear',
+			function () {
 
-			WP_CLI_Abilities_Command_Cache::clear();
+				WP_CLI_Abilities_Command_Cache::clear();
 
-			WP_CLI::success('Abilities command cache cleared.');
-		}, [
-			'shortdesc' => 'Clear the Abilities API command cache.',
-		]);
+				WP_CLI::success('Abilities command cache cleared.');
+			},
+			[
+				'shortdesc' => 'Clear the Abilities API command cache.',
+			]
+		);
 
-		WP_CLI::add_command('abilities list', function($args, $assoc_args) {
+		WP_CLI::add_command(
+			'abilities list',
+			function ($args, $assoc_args) {
 
-			$commands = WP_CLI_Abilities_Command_Cache::get_commands();
+				$commands = WP_CLI_Abilities_Command_Cache::get_commands();
 
-			if (empty($commands)) {
-				WP_CLI::warning('No cached commands. Run `wp abilities sync` first.');
-				return;
-			}
+				if (empty($commands)) {
+					WP_CLI::warning('No cached commands. Run `wp abilities sync` first.');
+					return;
+				}
 
-			$items = [];
+				$items = [];
 
-			foreach ($commands as $ability_name => $meta) {
-				$items[] = [
-					'ability'   => $ability_name,
-					'command'   => 'wp ' . $meta['path'],
-					'access'    => WP_CLI_Abilities_Command_Permissions::classify($meta['path']),
-					'shortdesc' => $meta['shortdesc'],
-				];
-			}
+				foreach ($commands as $ability_name => $meta) {
+					$items[] = [
+						'ability'   => $ability_name,
+						'command'   => 'wp ' . $meta['path'],
+						'access'    => WP_CLI_Abilities_Command_Permissions::classify($meta['path']),
+						'shortdesc' => $meta['shortdesc'],
+					];
+				}
 
-			$format = $assoc_args['format'] ?? 'table';
+				$format = $assoc_args['format'] ?? 'table';
 
-			WP_CLI\Utils\format_items($format, $items, ['ability', 'command', 'access', 'shortdesc']);
-		}, [
-			'shortdesc' => 'List cached WP-CLI abilities.',
-			'synopsis'  => [
-				[
-					'type'     => 'assoc',
-					'name'     => 'format',
-					'optional' => true,
-					'default'  => 'table',
-					'options'  => ['table', 'json', 'csv', 'yaml', 'count'],
+				WP_CLI\Utils\format_items($format, $items, ['ability', 'command', 'access', 'shortdesc']);
+			},
+			[
+				'shortdesc' => 'List cached WP-CLI abilities.',
+				'synopsis'  => [
+					[
+						'type'     => 'assoc',
+						'name'     => 'format',
+						'optional' => true,
+						'default'  => 'table',
+						'options'  => ['table', 'json', 'csv', 'yaml', 'count'],
+					],
 				],
-			],
-		]);
+			]
+		);
 	}
 
 	/**
@@ -197,7 +209,7 @@ class WP_CLI_Abilities {
 				$longdesc = $command->get_longdesc();
 			}
 
-			$results[$ability_name] = [
+			$results[ $ability_name ] = [
 				'path'      => $path_str,
 				'shortdesc' => $shortdesc,
 				'longdesc'  => $longdesc,
@@ -228,15 +240,23 @@ class WP_CLI_Abilities {
 		}
 
 		// Sanitize each segment: replace underscores with dashes, strip invalid chars.
-		$sanitized = array_map(function(string $segment): string {
-			$segment = str_replace('_', '-', $segment);
-			return preg_replace('/[^a-z0-9-]/', '', strtolower($segment));
-		}, $path_segments);
+		$sanitized = array_map(
+			function (string $segment): string {
+				$segment = str_replace('_', '-', $segment);
+				return preg_replace('/[^a-z0-9-]/', '', strtolower($segment));
+			},
+			$path_segments
+		);
 
 		// Remove empty segments after sanitization.
-		$sanitized = array_values(array_filter($sanitized, function(string $s): bool {
-			return $s !== '';
-		}));
+		$sanitized = array_values(
+			array_filter(
+				$sanitized,
+				function (string $s): bool {
+					return $s !== '';
+				}
+			)
+		);
 
 		if (empty($sanitized)) {
 			return null;
@@ -253,7 +273,7 @@ class WP_CLI_Abilities {
 		$name = self::CATEGORY . '/' . implode('/', $sanitized);
 
 		// Final validation.
-		if (!preg_match('/^[a-z0-9-]+(?:\/[a-z0-9-]+){1,3}$/', $name)) {
+		if (! preg_match('/^[a-z0-9-]+(?:\/[a-z0-9-]+){1,3}$/', $name)) {
 			return null;
 		}
 
@@ -269,10 +289,13 @@ class WP_CLI_Abilities {
 			return;
 		}
 
-		wp_register_ability_category(self::CATEGORY, [
-			'label'       => 'WP-CLI Commands',
-			'description' => 'WordPress CLI commands exposed as abilities. Run `wp abilities sync` to refresh.',
-		]);
+		wp_register_ability_category(
+			self::CATEGORY,
+			[
+				'label'       => 'WP-CLI Commands',
+				'description' => 'WordPress CLI commands exposed as abilities. Run `wp abilities sync` to refresh.',
+			]
+		);
 	}
 
 	/**
@@ -308,10 +331,10 @@ class WP_CLI_Abilities {
 			'label'               => $meta['shortdesc'] ?: "wp {$command_path}",
 			'description'         => $meta['longdesc'] ?: $meta['shortdesc'] ?: "Execute: wp {$command_path}",
 			'category'            => self::CATEGORY,
-			'permission_callback' => function() use ($command_path) {
+			'permission_callback' => function () use ($command_path) {
 				return WP_CLI_Abilities_Command_Permissions::check($command_path);
 			},
-			'execute_callback'    => function($input = null) use ($command_path, $synopsis) {
+			'execute_callback'    => function ($input = null) use ($command_path, $synopsis) {
 
 				$input_array = is_array($input) ? $input : [];
 				$input_array = (array) $input_array;
@@ -322,7 +345,7 @@ class WP_CLI_Abilities {
 					$synopsis
 				);
 			},
-			'meta' => [
+			'meta'                => [
 				'show_in_rest' => true,
 				'annotations'  => $annotations,
 				'mcp'          => [
@@ -332,7 +355,7 @@ class WP_CLI_Abilities {
 			],
 		];
 
-		if (!empty($input_schema)) {
+		if (! empty($input_schema)) {
 			$args['input_schema'] = $input_schema;
 		}
 
