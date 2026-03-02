@@ -1,0 +1,15 @@
+{
+	"name": "jeandavidgrattepanche/cli-abilities-bridge",
+	"description": "Automatically discovers WP-CLI commands and exposes them as abilities via the WordPress Abilities API.",
+	"type": "wordpress-plugin",
+	"license": "GPL-2.0-or-later",
+	"authors": [
+		{
+			"name": "Ultimate Multisite",
+			"homepage": "https://ultimatemultisite.com"
+		}
+	],
+	"require": {
+		"php": ">=7.4"
+	}
+}
