@@ -241,11 +241,14 @@ class WP_CLI_Abilities_System_Executor {
 			'TERM' => 'dumb',
 		];
 
+		// phpcs:ignore Generic.PHP.ForbiddenFunctions.Found -- proc_open is essential: this plugin's core purpose is executing CLI commands via process pipes.
 		$process = proc_open($command, $descriptors, $pipes, '/tmp', $env);
 
 		if (! is_resource($process)) {
 			return new \WP_Error('proc_open_failed', 'Failed to execute system command.');
 		}
+
+		// phpcs:disable WordPress.WP.AlternativeFunctions.file_system_operations_fwrite, WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- Operating on proc_open() process pipes, not filesystem files. WP_Filesystem is not applicable.
 
 		// Write stdin if provided.
 		if ($stdin !== null) {
@@ -287,7 +290,7 @@ class WP_CLI_Abilities_System_Executor {
 
 			if (@stream_select($read, $write, $except, 0, 200000) > 0) {
 				foreach ($read as $pipe) {
-					$data = fread($pipe, 8192);
+					$data = fread($pipe, 8192); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fread -- Reading from proc_open() process pipe, not a filesystem file.
 					if ($pipe === $pipes[1]) {
 						$stdout .= $data;
 					} else {
@@ -299,6 +302,8 @@ class WP_CLI_Abilities_System_Executor {
 
 		fclose($pipes[1]);
 		fclose($pipes[2]);
+
+		// phpcs:enable
 
 		$exit_code = $status['exitcode'] ?? proc_close($process);
 
