@@ -16,6 +16,22 @@ class WP_CLI_Abilities_System_Commands {
 	const CATEGORY = 'system';
 
 	/**
+	 * System command categories included in essential mode.
+	 *
+	 * Override with `wp_cli_abilities_essential_system_categories` filter or set
+	 * `WP_CLI_ABILITIES_FULL_MODE` to true for all categories.
+	 *
+	 * @var string[]
+	 */
+	const ESSENTIAL_SYSTEM_CATEGORIES = [
+		'network',
+		'http',
+		'datetime',
+		'text',
+		'sysinfo',
+	];
+
+	/**
 	 * Singleton instance.
 	 *
 	 * @var self|null
@@ -63,10 +79,27 @@ class WP_CLI_Abilities_System_Commands {
 
 	/**
 	 * Register all system command abilities.
+	 *
+	 * By default only commands in essential categories are registered.
+	 * Define `WP_CLI_ABILITIES_FULL_MODE` as true to register all commands,
+	 * or use the `wp_cli_abilities_essential_system_categories` filter.
 	 */
 	public function register_abilities(): void {
 
-		$commands = self::get_command_definitions();
+		$full_mode   = defined('WP_CLI_ABILITIES_FULL_MODE') && WP_CLI_ABILITIES_FULL_MODE;
+		$categorized = self::get_categorized_commands();
+
+		if (! $full_mode) {
+			/**
+			 * Filter the list of essential system command categories.
+			 *
+			 * @param string[] $categories Category slugs to include.
+			 */
+			$essential   = apply_filters('wp_cli_abilities_essential_system_categories', self::ESSENTIAL_SYSTEM_CATEGORIES);
+			$categorized = array_intersect_key($categorized, array_flip($essential));
+		}
+
+		$commands = array_merge(...array_values($categorized));
 
 		foreach ($commands as $name => $def) {
 			$this->register_command($name, $def);
@@ -152,25 +185,35 @@ class WP_CLI_Abilities_System_Commands {
 	}
 
 	/**
-	 * Get all system command definitions.
+	 * Get all system command definitions (flat).
 	 *
 	 * @return array<string, array>
 	 */
 	public static function get_command_definitions(): array {
 
-		return array_merge(
-			self::network_commands(),
-			self::http_commands(),
-			self::datetime_commands(),
-			self::sysinfo_commands(),
-			self::text_commands(),
-			self::crypto_commands(),
-			self::email_commands(),
-			self::admin_commands(),
-			self::exec_commands(),
-			self::archive_commands(),
-			self::math_commands()
-		);
+		return array_merge(...array_values(self::get_categorized_commands()));
+	}
+
+	/**
+	 * Get system command definitions grouped by category.
+	 *
+	 * @return array<string, array<string, array>>
+	 */
+	public static function get_categorized_commands(): array {
+
+		return [
+			'network'  => self::network_commands(),
+			'http'     => self::http_commands(),
+			'datetime' => self::datetime_commands(),
+			'sysinfo'  => self::sysinfo_commands(),
+			'text'     => self::text_commands(),
+			'crypto'   => self::crypto_commands(),
+			'email'    => self::email_commands(),
+			'admin'    => self::admin_commands(),
+			'exec'     => self::exec_commands(),
+			'archive'  => self::archive_commands(),
+			'math'     => self::math_commands(),
+		];
 	}
 
 	/**

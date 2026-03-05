@@ -20,6 +20,67 @@ class WP_CLI_Abilities {
 	const CATEGORY = 'wp-cli';
 
 	/**
+	 * WP-CLI command groups included in essential mode.
+	 *
+	 * When full mode is disabled (the default), only commands whose top-level
+	 * group appears in this list are registered as abilities. This keeps the
+	 * tool count manageable for local models (~120 abilities vs 524+).
+	 *
+	 * Override with the `wp_cli_abilities_essential_groups` filter or set the
+	 * `WP_CLI_ABILITIES_FULL_MODE` constant to `true` for all commands.
+	 *
+	 * @var string[]
+	 */
+	const ESSENTIAL_GROUPS = [
+		'post',
+		'option',
+		'plugin',
+		'theme',
+		'user',
+		'site',
+		'term',
+		'comment',
+		'media',
+		'menu',
+		'widget',
+		'cron',
+		'transient',
+		'post-type',
+		'taxonomy',
+		'role',
+		'rewrite',
+		'export',
+		'import',
+	];
+
+	/**
+	 * WP-CLI global parameters that appear on every command.
+	 *
+	 * These are stripped from both the synopsis and longdesc during sync to
+	 * avoid repeating ~500 tokens of boilerplate per ability.
+	 *
+	 * @var string[]
+	 */
+	const GLOBAL_PARAMETERS = [
+		'path',
+		'url',
+		'ssh',
+		'http',
+		'user',
+		'skip-plugins',
+		'skip-themes',
+		'skip-packages',
+		'require',
+		'exec',
+		'context',
+		'color',
+		'no-color',
+		'debug',
+		'prompt',
+		'quiet',
+	];
+
+	/**
 	 * Internal WP-CLI dispatcher methods that get exposed as false subcommands
 	 * when a command class extends CompositeCommand or Subcommand.
 	 *
@@ -198,6 +259,9 @@ class WP_CLI_Abilities {
 				}
 			}
 
+			// Strip global parameters from synopsis to save tokens.
+			$synopsis = self::strip_global_params($synopsis);
+
 			$shortdesc = '';
 			$longdesc  = '';
 
@@ -207,7 +271,11 @@ class WP_CLI_Abilities {
 
 			if (method_exists($command, 'get_longdesc')) {
 				$longdesc = $command->get_longdesc();
+				$longdesc = self::strip_global_params_from_longdesc($longdesc);
 			}
+
+			// Enrich synopsis with options from longdesc YAML blocks.
+			$synopsis = self::enrich_synopsis_from_longdesc($synopsis, $longdesc);
 
 			$results[ $ability_name ] = [
 				'path'      => $path_str,
@@ -281,6 +349,121 @@ class WP_CLI_Abilities {
 	}
 
 	/**
+	 * Remove global WP-CLI parameters from a synopsis array.
+	 *
+	 * @param array $synopsis Parsed synopsis entries.
+	 * @return array Filtered synopsis without global params.
+	 */
+	private static function strip_global_params(array $synopsis): array {
+
+		return array_values(
+			array_filter($synopsis, function ($param) {
+				$name = $param['name'] ?? '';
+				return ! in_array($name, self::GLOBAL_PARAMETERS, true);
+			})
+		);
+	}
+
+	/**
+	 * Remove the "GLOBAL PARAMETERS" section from a longdesc string.
+	 *
+	 * WP-CLI appends a standard block starting with "## GLOBAL PARAMETERS"
+	 * to every command's longdesc. This strips it to save tokens.
+	 *
+	 * @param string $longdesc The command's long description.
+	 * @return string Trimmed description without global parameters section.
+	 */
+	private static function strip_global_params_from_longdesc(string $longdesc): string {
+
+		// The section typically starts with "## GLOBAL PARAMETERS" or "GLOBAL PARAMETERS".
+		$pos = stripos($longdesc, 'GLOBAL PARAMETERS');
+
+		if ($pos !== false) {
+			// Walk back to the start of the heading line (e.g. "## ").
+			$line_start = strrpos(substr($longdesc, 0, $pos), "\n");
+			$cut_pos    = $line_start !== false ? $line_start : $pos;
+			$longdesc   = substr($longdesc, 0, $cut_pos);
+		}
+
+		return trim($longdesc);
+	}
+
+	/**
+	 * Enrich synopsis entries with options extracted from longdesc YAML blocks.
+	 *
+	 * WP-CLI longdescs contain YAML blocks like:
+	 *   [--format=<format>]
+	 *   : Render output in a particular format.
+	 *   ---
+	 *   options:
+	 *     - table
+	 *     - json
+	 *   ---
+	 *
+	 * SynopsisParser::parse() doesn't extract these, so we parse them from
+	 * the longdesc and merge into the synopsis array.
+	 *
+	 * @param array  $synopsis Synopsis entries from SynopsisParser.
+	 * @param string $longdesc The command's long description.
+	 * @return array Enriched synopsis with options arrays.
+	 */
+	private static function enrich_synopsis_from_longdesc(array $synopsis, string $longdesc): array {
+
+		if (empty($longdesc)) {
+			return $synopsis;
+		}
+
+		// Find all YAML blocks preceded by a param definition.
+		// Pattern: [--param=<param>] followed by `: description` lines, then --- yaml ---
+		// The description lines start with `:` so we constrain the match to avoid
+		// jumping over other param definitions to reach an unrelated YAML block.
+		$pattern = '/\[--(\w[\w-]*)=<[^>]+>\]\n(?::\s*[^\n]+\n)*---\s*\n(.*?)\n\s*---/s';
+
+		if (!preg_match_all($pattern, $longdesc, $matches, PREG_SET_ORDER)) {
+			return $synopsis;
+		}
+
+		$param_options = [];
+
+		foreach ($matches as $match) {
+			$param_name = $match[1];
+			$yaml_body  = $match[2];
+
+			// Extract options list from the YAML block.
+			if (preg_match('/options:\s*\n((?:\s+-\s+.+\n?)+)/i', $yaml_body, $opts_match)) {
+				$options = [];
+
+				preg_match_all('/^\s+-\s+[\'"]?([^\'";\n]+)[\'"]?\s*$/m', $opts_match[1], $opt_items);
+
+				foreach ($opt_items[1] as $item) {
+					$options[] = trim($item);
+				}
+
+				if (!empty($options)) {
+					$param_options[$param_name] = $options;
+				}
+			}
+		}
+
+		if (empty($param_options)) {
+			return $synopsis;
+		}
+
+		// Merge options into matching synopsis entries.
+		foreach ($synopsis as &$param) {
+			$name = $param['name'] ?? '';
+
+			if (isset($param_options[$name]) && empty($param['options'])) {
+				$param['options'] = $param_options[$name];
+			}
+		}
+
+		unset($param);
+
+		return $synopsis;
+	}
+
+	/**
 	 * Register the wp-cli ability category.
 	 */
 	public function register_category(): void {
@@ -300,6 +483,10 @@ class WP_CLI_Abilities {
 
 	/**
 	 * Register abilities from the cached commands.
+	 *
+	 * By default only commands in the essential groups list are registered.
+	 * Define `WP_CLI_ABILITIES_FULL_MODE` as true to register all commands,
+	 * or use the `wp_cli_abilities_essential_groups` filter to customise.
 	 */
 	public function register_abilities(): void {
 
@@ -307,6 +494,22 @@ class WP_CLI_Abilities {
 
 		if (empty($commands)) {
 			return;
+		}
+
+		$full_mode = defined('WP_CLI_ABILITIES_FULL_MODE') && WP_CLI_ABILITIES_FULL_MODE;
+
+		if (! $full_mode) {
+			/**
+			 * Filter the list of essential WP-CLI command groups.
+			 *
+			 * @param string[] $groups Top-level command group slugs to include.
+			 */
+			$essential = apply_filters('wp_cli_abilities_essential_groups', self::ESSENTIAL_GROUPS);
+
+			$commands = array_filter($commands, function ($meta) use ($essential) {
+				$group = explode(' ', $meta['path'])[0] ?? '';
+				return in_array($group, $essential, true);
+			});
 		}
 
 		foreach ($commands as $ability_name => $meta) {

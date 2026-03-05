@@ -83,6 +83,14 @@ class WP_CLI_Abilities_Schema_Builder {
 			}
 		}
 
+		// Always include 'url' for multisite targeting.
+		if (is_multisite() && ! isset($properties['url'])) {
+			$properties['url'] = [
+				'type'        => 'string',
+				'description' => 'Target site URL for multisite (e.g. https://example.com/subsite). Defaults to the main site or the last-used site.',
+			];
+		}
+
 		if (empty($properties) && ! $has_generic) {
 			return [];
 		}

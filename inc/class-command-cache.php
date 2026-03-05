@@ -82,6 +82,38 @@ class WP_CLI_Abilities_Command_Cache {
 		'comment generate',
 		'term generate',
 		'user generate',
+
+		// Maintenance/repair — rarely useful for an AI agent.
+		'comment recount',
+		'term recount',
+		'post meta clean-duplicates',
+		'plugin verify-checksums',
+
+		// Interactive — can't work non-interactively.
+		'post edit',
+
+		// Dangerous migrations/structure changes.
+		'term migrate',
+		'rewrite structure',
+
+		// Security-sensitive.
+		'user check-password',
+		'user reset-password',
+		'user import-csv',
+		'user spam',
+		'user unspam',
+		'user application-password record-usage',
+
+		// Filesystem destruction.
+		'plugin delete',
+		'theme delete',
+		'site delete',
+
+		// Risky moderation/destructive.
+		'site spam',
+		'site unspam',
+		'widget reset',
+		'cron event delete',
 	];
 
 	/**
