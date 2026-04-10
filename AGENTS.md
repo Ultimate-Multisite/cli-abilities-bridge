@@ -26,14 +26,6 @@ cli-abilities-bridge/
 └── readme.txt
 ```
 
-## Architecture
-
-The plugin registers two categories of abilities:
-
-1. **`wp-cli/execute`** — Single ability. Agents pass raw WP-CLI commands (e.g. `post list --format=json`). The executor tokenizes the string, validates against the blocklist, checks permissions based on the command's classification, then runs via array-based `proc_open` (no shell).
-
-2. **`system/*`** — Multiple structured abilities for system commands (whois, dig, curl, etc.). Each has its own input schema. These are separate because they're a curated, fixed set — not a discovery problem.
-
 ## Code Style & Conventions
 
 - **PHP version**: >= 7.4
