@@ -87,7 +87,7 @@ Yes. Use the `wp_cli_abilities_capability_map` filter to customize the WordPress
 
 == Changelog ==
 
-= 2.0.0 =
+= 2.0.0 - 2026-04-10 =
 * **Breaking change**: Replaced per-command ability registration with a single `wp-cli/execute` ability.
 * Agents now pass WP-CLI commands as plain text strings — natural bash-style interface.
 * Removed command discovery, caching, and sync workflow (`wp abilities sync` is gone).
