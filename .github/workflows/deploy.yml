@@ -1,0 +1,77 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  PLUGIN_SLUG: cli-abilities-bridge
+
+jobs:
+  build-and-release:
+    name: Build and Create Release
+    runs-on: ubuntu-latest
+    if: github.repository == 'Ultimate-Multisite/cli-abilities-bridge'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate release version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+
+          # Check plugin header matches tag
+          PLUGIN_VERSION=$(grep -oP '^\s*\*?\s*Version:\s*\K.*' ${PLUGIN_SLUG}.php | tr -d '[:space:]')
+          if [ "$PLUGIN_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Plugin header version ($PLUGIN_VERSION) does not match tag ($TAG_VERSION)"
+            exit 1
+          fi
+
+          # Check readme.txt Stable tag matches
+          README_VERSION=$(grep -oP '^Stable tag:\s*\K.*' readme.txt | tr -d '[:space:]')
+          if [ "$README_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::readme.txt Stable tag ($README_VERSION) does not match tag ($TAG_VERSION)"
+            exit 1
+          fi
+
+          # Check readme.txt has a changelog entry for this version
+          if ! grep -qP "^=\s+\Q${TAG_VERSION}\E[\s=]" readme.txt; then
+            echo "::error::readme.txt has no changelog entry for version $TAG_VERSION"
+            exit 1
+          fi
+
+          echo "All version checks passed: $TAG_VERSION"
+
+      - name: Build plugin zip
+        run: |
+          mkdir -p build/${PLUGIN_SLUG}
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='AGENTS.md' \
+            --exclude='wp-cli.yml' \
+            --exclude='.aidevops.json' \
+            --exclude='build' \
+            . build/${PLUGIN_SLUG}/
+          cd build
+          zip -r ../${PLUGIN_SLUG}.zip ${PLUGIN_SLUG}/
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.PLUGIN_SLUG }}-zip
+          path: ${{ env.PLUGIN_SLUG }}.zip
+          retention-days: 30
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.PLUGIN_SLUG }}.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
