@@ -3,7 +3,12 @@
 defined('ABSPATH') || exit;
 
 /**
- * Executes WP-CLI commands via proc_open with proper escaping.
+ * Executes WP-CLI commands from raw command strings.
+ *
+ * Accepts the command exactly as an agent would type it in a terminal
+ * (minus the `wp` prefix), tokenizes it safely, validates against the
+ * blocklist and permissions, then executes via array-based proc_open
+ * which bypasses the shell entirely — eliminating injection risk.
  */
 class WP_CLI_Abilities_Command_Executor {
 
@@ -37,112 +42,233 @@ class WP_CLI_Abilities_Command_Executor {
 	}
 
 	/**
-	 * Execute a WP-CLI command.
+	 * Execute a WP-CLI command from a raw command string.
 	 *
-	 * @param string $command_path Space-separated command path (e.g. "post list").
-	 * @param array  $input        Input arguments from the ability invocation.
-	 * @param array  $synopsis     The command's synopsis for type awareness.
-	 * @return array|string|\WP_Error Parsed JSON array, raw string output, or WP_Error.
+	 * @param string $command The command string without the `wp` prefix
+	 *                        (e.g. "post list --post_type=page --format=json").
+	 * @return array|string|\WP_Error Parsed JSON, raw output, or error.
 	 */
-	public static function execute(string $command_path, array $input, array $synopsis = []) {
+	public static function execute(string $command) {
 
+		$command = trim($command);
+
+		// Strip leading 'wp ' if the agent included it.
+		if (str_starts_with($command, 'wp ')) {
+			$command = substr($command, 3);
+		}
+
+		if ($command === '') {
+			return new \WP_Error(
+				'wp_cli_empty_command',
+				'No command provided. Pass a WP-CLI command, e.g. "post list --format=json".'
+			);
+		}
+
+		// Tokenize the command string (handles quoted arguments).
+		$tokens = self::tokenize($command);
+
+		if (empty($tokens)) {
+			return new \WP_Error(
+				'wp_cli_empty_command',
+				'Could not parse the command. Pass a WP-CLI command, e.g. "post list --format=json".'
+			);
+		}
+
+		// Extract the command path (non-flag tokens at the start).
+		$command_path = self::extract_command_path($tokens);
+
+		// Check blocklist.
+		if (WP_CLI_Abilities_Command_Cache::is_blocked($command_path)) {
+			return new \WP_Error(
+				'wp_cli_blocked_command',
+				sprintf(
+					'The command "%s" is blocked for security reasons. Blocked top-level groups: %s.',
+					$command_path,
+					implode(', ', WP_CLI_Abilities_Command_Cache::get_blocklist())
+				),
+				['status' => 403]
+			);
+		}
+
+		// Fine-grained permission check: destructive commands need manage_network.
+		$level      = WP_CLI_Abilities_Command_Permissions::classify($command_path);
+		$perm_check = WP_CLI_Abilities_Command_Permissions::check_level($level);
+
+		if (is_wp_error($perm_check)) {
+			return $perm_check;
+		}
+
+		// Find WP-CLI binary.
 		$wp_binary = self::find_wp_cli();
 
 		if (is_wp_error($wp_binary)) {
 			return $wp_binary;
 		}
 
-		$cmd_parts = [escapeshellarg($wp_binary)];
-
-		// Add the command path segments.
-		foreach (explode(' ', $command_path) as $segment) {
-			$cmd_parts[] = escapeshellarg($segment);
-		}
-
-		// Extract --url before iterating input args so it doesn't get added twice.
-		$explicit_url = '';
-
-		if (!empty($input['url'])) {
-			$explicit_url = $input['url'];
-			self::$current_site_url = $explicit_url;
-			unset($input['url']);
-		}
-
-		// Build a lookup of synopsis param types by name.
-		$param_types = [];
-
-		foreach ($synopsis as $param) {
-
-			$name = $param['name'] ?? '';
-			$type = $param['type'] ?? '';
-
-			if (!empty($name)) {
-				$param_types[$name] = $type;
+		// Track --url if explicitly provided (for multisite context persistence).
+		foreach ($tokens as $token) {
+			if (preg_match('/^--url=(.+)$/', $token, $m)) {
+				self::$current_site_url = $m[1];
 			}
 		}
 
-		// Add input arguments.
-		foreach ($input as $key => $value) {
+		// Build the process argument array.
+		// Using array-based proc_open (PHP 7.4+) bypasses the shell entirely.
+		$proc_args   = [$wp_binary];
+		$proc_args   = array_merge($proc_args, $tokens);
+		$has_path    = self::tokens_have_flag($tokens, '--path');
+		$has_url     = self::tokens_have_flag($tokens, '--url');
+		$has_user    = self::tokens_have_flag($tokens, '--user');
+		$has_color   = self::tokens_have_flag($tokens, '--no-color');
 
-			$synopsis_type = $param_types[$key] ?? 'assoc';
+		if (! $has_path) {
+			$proc_args[] = '--path=' . ABSPATH;
+		}
 
-			if ($synopsis_type === 'positional') {
-				// Positional args go without a key prefix.
-				$cmd_parts[] = escapeshellarg((string) $value);
-			} elseif ($synopsis_type === 'flag') {
-				// Coerce string "true"/"false"/"1"/"0" to boolean for flags.
-				if (is_string($value)) {
-					$value = filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) ?? (bool) $value;
-				}
+		if (! $has_url && is_multisite()) {
+			$target_url  = self::$current_site_url ?: network_site_url();
+			$proc_args[] = '--url=' . $target_url;
+		}
 
-				// Flags are only added when truthy.
-				if ($value) {
-					$cmd_parts[] = escapeshellarg("--{$key}");
-				}
-			} else {
-				// Assoc and generic args use --key=value.
-				$cmd_parts[] = escapeshellarg("--{$key}") . '=' . escapeshellarg((string) $value);
+		// Pass the authenticated user so permission-aware commands work correctly.
+		if (! $has_user) {
+			$current_user_id = get_current_user_id();
+
+			if ($current_user_id > 0) {
+				$proc_args[] = '--user=' . (string) $current_user_id;
 			}
 		}
 
-		// Add --format=json if the command supports it.
-		if (self::supports_format($synopsis) && !isset($input['format'])) {
-			$cmd_parts[] = '--format=json';
+		if (! $has_color) {
+			$proc_args[] = '--no-color';
 		}
 
-		// Add multisite context.
-		$cmd_parts[] = '--path=' . escapeshellarg(ABSPATH);
-
-		if (is_multisite()) {
-			$target_url = $explicit_url ?: self::$current_site_url ?: network_site_url();
-			$cmd_parts[] = '--url=' . escapeshellarg($target_url);
-		}
-
-		// Pass the current user so WP-CLI commands that check permissions
-		// (e.g. WooCommerce REST-based CLI) run as the authenticated user.
-		$current_user_id = get_current_user_id();
-
-		if ($current_user_id > 0) {
-			$cmd_parts[] = '--user=' . escapeshellarg((string) $current_user_id);
-		}
-
-		// Ensure non-interactive.
-		$cmd_parts[] = '--no-color';
-
-		$command = implode(' ', $cmd_parts);
-
-		$result = self::run($command, $command_path);
+		$result = self::run($proc_args, $command_path);
 
 		// Auto-set current site context after site creation.
-		if (str_starts_with($command_path, 'site create') && !is_wp_error($result)) {
+		if (str_starts_with($command_path, 'site create') && ! is_wp_error($result)) {
 			$url = self::extract_url_from_output($result);
 
-			if ($url) {
+			if ($url !== '') {
 				self::$current_site_url = $url;
 			}
 		}
 
 		return $result;
+	}
+
+	/**
+	 * Tokenize a command string into an array of arguments.
+	 *
+	 * Handles single-quoted, double-quoted, and backslash-escaped characters.
+	 * Since we use array-based proc_open (no shell), the tokens are passed
+	 * directly to the process — no shell metacharacter risk.
+	 *
+	 * @param string $command The raw command string.
+	 * @return string[] Array of argument tokens.
+	 */
+	private static function tokenize(string $command): array {
+
+		$tokens    = [];
+		$current   = '';
+		$in_single = false;
+		$in_double = false;
+		$len       = strlen($command);
+
+		for ($i = 0; $i < $len; $i++) {
+			$char = $command[ $i ];
+
+			if ($in_single) {
+				if ($char === "'") {
+					$in_single = false;
+				} else {
+					$current .= $char;
+				}
+			} elseif ($in_double) {
+				if ($char === '"') {
+					$in_double = false;
+				} elseif ($char === '\\' && $i + 1 < $len) {
+					$next = $command[ $i + 1 ];
+
+					// Only escape quotes and backslashes inside double quotes.
+					if ($next === '"' || $next === '\\') {
+						$current .= $next;
+						$i++;
+					} else {
+						$current .= $char;
+					}
+				} else {
+					$current .= $char;
+				}
+			} else {
+				if ($char === "'") {
+					$in_single = true;
+				} elseif ($char === '"') {
+					$in_double = true;
+				} elseif ($char === '\\' && $i + 1 < $len) {
+					$current .= $command[ $i + 1 ];
+					$i++;
+				} elseif (ctype_space($char)) {
+					if ($current !== '') {
+						$tokens[] = $current;
+						$current  = '';
+					}
+				} else {
+					$current .= $char;
+				}
+			}
+		}
+
+		if ($current !== '') {
+			$tokens[] = $current;
+		}
+
+		return $tokens;
+	}
+
+	/**
+	 * Extract the command path from tokenized arguments.
+	 *
+	 * The command path is the sequence of non-flag tokens at the start
+	 * (e.g. ["post", "list"] from "post list --format=json").
+	 *
+	 * @param string[] $tokens Tokenized arguments.
+	 * @return string Space-separated command path (e.g. "post list").
+	 */
+	private static function extract_command_path(array $tokens): string {
+
+		$path_parts = [];
+
+		foreach ($tokens as $token) {
+			if (str_starts_with($token, '-')) {
+				break;
+			}
+
+			$path_parts[] = $token;
+		}
+
+		return implode(' ', $path_parts);
+	}
+
+	/**
+	 * Check if a flag is present in the tokens.
+	 *
+	 * Matches both --flag=value and bare --flag forms.
+	 *
+	 * @param string[] $tokens Tokenized arguments.
+	 * @param string   $flag   The flag to check (e.g. "--url", "--path").
+	 * @return bool
+	 */
+	private static function tokens_have_flag(array $tokens, string $flag): bool {
+
+		foreach ($tokens as $token) {
+			// Match --flag or --flag=value.
+			if ($token === $flag || str_starts_with($token, $flag . '=')) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -159,7 +285,7 @@ class WP_CLI_Abilities_Command_Executor {
 		 */
 		$path = apply_filters('wp_cli_abilities_wp_binary', '');
 
-		if (!empty($path) && is_executable($path)) {
+		if (! empty($path) && is_executable($path)) {
 			return $path;
 		}
 
@@ -180,7 +306,7 @@ class WP_CLI_Abilities_Command_Executor {
 		// Try which.
 		$which = trim((string) shell_exec('which wp 2>/dev/null'));
 
-		if (!empty($which) && is_executable($which)) {
+		if (! empty($which) && is_executable($which)) {
 			return $which;
 		}
 
@@ -191,46 +317,13 @@ class WP_CLI_Abilities_Command_Executor {
 	}
 
 	/**
-	 * Check if the command supports --format=json for OUTPUT formatting.
+	 * Run a command via array-based proc_open (no shell interpretation).
 	 *
-	 * Some commands have a `format` param that controls value serialization
-	 * (e.g. `option update --format=plaintext`), not output formatting.
-	 * These typically offer only `plaintext` and `json`, while output
-	 * formatters always include `table`.
-	 *
-	 * Only auto-add --format=json when the param's options include both
-	 * `json` (so the command supports JSON output) and `table` (proving
-	 * it's an output formatter, not a value serializer).
-	 *
-	 * @param array $synopsis Parsed synopsis.
-	 * @return bool
-	 */
-	private static function supports_format(array $synopsis): bool {
-
-		foreach ($synopsis as $param) {
-			if (($param['name'] ?? '') === 'format' && ($param['type'] ?? '') === 'assoc') {
-				$options = $param['options'] ?? [];
-
-				// Must have both 'json' and 'table' — table is the hallmark
-				// of output formatting (list/get commands). Value serializers
-				// (like option update) only offer plaintext + json.
-				return is_array($options)
-					&& in_array('json', $options, true)
-					&& in_array('table', $options, true);
-			}
-		}
-
-		return false;
-	}
-
-	/**
-	 * Run a shell command via proc_open.
-	 *
-	 * @param string $command      The full shell command.
-	 * @param string $command_path The WP-CLI command path for error context.
+	 * @param string[] $args         The command as an array of arguments.
+	 * @param string   $command_path The WP-CLI command path for error context.
 	 * @return array|string|\WP_Error
 	 */
-	private static function run(string $command, string $command_path = '') {
+	private static function run(array $args, string $command_path = '') {
 
 		$descriptors = [
 			0 => ['pipe', 'r'],  // stdin
@@ -239,13 +332,13 @@ class WP_CLI_Abilities_Command_Executor {
 		];
 
 		// phpcs:ignore Generic.PHP.ForbiddenFunctions.Found -- proc_open is essential: this plugin's core purpose is executing WP-CLI commands via process pipes.
-		$process = proc_open($command, $descriptors, $pipes, ABSPATH);
+		$process = proc_open($args, $descriptors, $pipes, ABSPATH);
 
-		if (!is_resource($process)) {
+		if (! is_resource($process)) {
 			return new \WP_Error('proc_open_failed', 'Failed to execute WP-CLI command.');
 		}
 
-		// phpcs:disable WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- Closing proc_open() process pipes, not filesystem file handles. WP_Filesystem is not applicable.
+		// phpcs:disable WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- Closing proc_open() process pipes, not filesystem file handles.
 
 		// Close stdin immediately.
 		fclose($pipes[0]);
@@ -261,7 +354,7 @@ class WP_CLI_Abilities_Command_Executor {
 		$exit_code = proc_close($process);
 
 		if ($exit_code !== 0) {
-			$raw_msg = !empty($stderr) ? trim($stderr) : "WP-CLI exited with code {$exit_code}";
+			$raw_msg = ! empty($stderr) ? trim($stderr) : "WP-CLI exited with code {$exit_code}";
 			$hint    = self::humanize_error($raw_msg, $command_path);
 
 			return new \WP_Error(
@@ -275,7 +368,7 @@ class WP_CLI_Abilities_Command_Executor {
 			);
 		}
 
-		// Try to parse as JSON.
+		// Try to parse as JSON for structured responses.
 		$decoded = json_decode($stdout, true);
 
 		if (json_last_error() === JSON_ERROR_NONE) {
@@ -288,9 +381,6 @@ class WP_CLI_Abilities_Command_Executor {
 	/**
 	 * Generate actionable error hints from WP-CLI stderr output.
 	 *
-	 * Pattern-matches common failure messages and appends a hint so the
-	 * AI model can self-correct without guessing.
-	 *
 	 * @param string $stderr       The raw stderr text.
 	 * @param string $command_path The WP-CLI command path for context.
 	 * @return string The original message with an appended hint (if any).
@@ -302,14 +392,14 @@ class WP_CLI_Abilities_Command_Executor {
 		if (str_contains($stderr, 'Invalid JSON:')) {
 			$hint = 'Hint: The value was interpreted as JSON. Remove --format or use --format=plaintext for this command.';
 		} elseif (str_contains($stderr, "isn't a registered") || str_contains($stderr, 'not a registered')) {
-			$hint = 'Hint: This WP-CLI command is not available. Check that required plugins are active.';
+			$hint = 'Hint: This WP-CLI command is not available. Check that required plugins are active. Run "plugin list --status=active --format=json" to see active plugins.';
 		} elseif (str_contains($stderr, 'parameter: --porcelain') || str_contains($stderr, 'porcelain expects')) {
-			$hint = 'Hint: The --porcelain flag takes no value. Pass it as boolean true, not a string.';
+			$hint = 'Hint: The --porcelain flag takes no value. Use just "--porcelain" without "=".';
 		} elseif (preg_match('/^(usage|Synopsis):/im', $stderr)) {
-			$hint = 'Hint: Wrong arguments were passed. Check the required positional parameters for this command.';
+			$hint = 'Hint: Wrong arguments. Run "help ' . $command_path . '" to see the correct usage.';
 		}
 
-		if (!empty($hint)) {
+		if (! empty($hint)) {
 			return $stderr . "\n" . $hint;
 		}
 
@@ -319,9 +409,6 @@ class WP_CLI_Abilities_Command_Executor {
 	/**
 	 * Extract a URL from WP-CLI site create output.
 	 *
-	 * WP-CLI's `site create` outputs the new site URL on success.
-	 * This extracts it so we can auto-set the current site context.
-	 *
 	 * @param array|string $output The command output.
 	 * @return string The extracted URL, or empty string.
 	 */
@@ -329,9 +416,6 @@ class WP_CLI_Abilities_Command_Executor {
 
 		$text = is_array($output) ? wp_json_encode($output, JSON_UNESCAPED_SLASHES) : (string) $output;
 
-		// Match common WP-CLI site create output patterns:
-		// "Success: Site 3 created: https://example.com/subsite"
-		// Or just a URL on its own line.
 		if (preg_match('#(https?://[^\s"\'}\]>]+)#i', $text, $matches)) {
 			return rtrim($matches[1], '.,;');
 		}
