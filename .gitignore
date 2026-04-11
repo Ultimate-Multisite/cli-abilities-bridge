@@ -1,0 +1,5 @@
+.aidevops.json
+.agents/loop-state/
+vendor/
+node_modules/
+.DS_Store
