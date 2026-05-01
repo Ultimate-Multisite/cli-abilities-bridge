@@ -20,5 +20,10 @@
         "allow-plugins": {
             "phpstan/extension-installer": true
         }
+    },
+    "autoload-dev": {
+        "files": [
+            "vendor/php-stubs/wordpress-stubs/wordpress-stubs.php"
+        ]
     }
 }
