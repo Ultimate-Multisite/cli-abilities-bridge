@@ -3,7 +3,7 @@ Contributors: jeandavidgrattepanche
 Tags: cli, abilities, api, automation, multisite
 Requires at least: 6.8
 Tested up to: 7.1
-Stable tag: 2.0.0
+Stable tag: 2.0.1
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -86,6 +86,10 @@ Yes. Use the `wp_cli_abilities_capability_map` filter to customize the WordPress
 == Screenshots ==
 
 == Changelog ==
+
+= 2.0.1 =
+Version 2.0.1 - Released on 2026-08-19
+- Improved: WordPress compatibility metadata now reflects testing through WordPress 7.1.
 
 = 2.0.0 - 2026-04-10 =
 * **Breaking change**: Replaced per-command ability registration with a single `wp-cli/execute` ability.

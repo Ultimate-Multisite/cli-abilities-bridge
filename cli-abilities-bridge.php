@@ -3,7 +3,7 @@
  * Plugin Name: CLI Abilities Bridge
  * Plugin URI:  https://ultimatemultisite.com/cli-abilities-bridge
  * Description: Exposes WP-CLI and system commands as abilities via the WordPress Abilities API.
- * Version:     2.0.0
+ * Version:     2.0.1
  * Author:      Ultimate Multisite
  * Author URI:  https://ultimatemultisite.com
  * License:     GPLv2 or later
@@ -12,6 +12,10 @@
  * Requires at least: 6.8
  * Requires PHP:      7.4
  */
+
+if ( ! defined( 'CLI_ABILITIES_BRIDGE_VERSION' ) ) {
+	define( 'CLI_ABILITIES_BRIDGE_VERSION', '2.0.1' );
+}
 
 defined('ABSPATH') || exit;
 
